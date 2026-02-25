@@ -1,0 +1,276 @@
+--[=[
+	@class ReplicaClient
+	@client
+	@tag Replica
+
+	A class for receiving replicated objects from the server.
+]=]
+
+local RunService = game:GetService("RunService")
+
+local ReplicaTypes = require(script.Parent.ReplicaTypes)
+local Signal = require(script.Parent.Parent.Signal)
+
+local remote: RemoteEvent
+
+local ReplicaClient = {}
+ReplicaClient.__index = ReplicaClient
+
+-- Replicated replica objects
+local replicas: { ReplicaClient<any> } = {}
+local signals = {} :: { [string]: Signal.Signal<ReplicaClient<any>> }
+
+export type ReplicaClient<T> = typeof(setmetatable(
+	{} :: {
+		replicaId: string,
+		class: string,
+
+		data: T,
+
+		keyChangedSignals: { [string]: { Signal.Signal<any> } },
+
+		Changed: Signal.Signal<ReplicaTypes.Data>,
+		Destroyed: Signal.Signal<nil>,
+	},
+	ReplicaClient
+))
+
+-- Used to create a new ReplicaClient object
+local function newReplicaClient(newReplica: ReplicaTypes.ReplicaFetchPayloadItem)
+	-- Does the replica already exist?
+	for _, replica: ReplicaClient<any> in pairs(replicas) do
+		if replica.replicaId == newReplica.replicaId then
+			return
+		end
+	end
+
+	assert(RunService:IsClient(), "ReplicaClient can only be used on the client")
+	assert(newReplica, "Expected existing replica")
+	assert(typeof(newReplica.data) == "table", "Expected table for existing replica data")
+
+	for indexType, _ in newReplica.data do
+		assert(type(indexType) == "string", "All keys in replica data must be strings")
+	end
+
+	local self = setmetatable({
+		replicaId = newReplica.replicaId,
+		class = newReplica.class,
+		data = newReplica.data or {},
+
+		keyChangedSignals = {},
+
+		Changed = Signal.new(),
+		Destroyed = Signal.new(),
+	}, ReplicaClient) :: ReplicaClient<any>
+
+	table.insert(replicas, self)
+
+	local newIndex = table.find(replicas, self) :: number
+	local newItem = replicas[newIndex]
+
+	if signals[self.class] then
+		signals[self.class]:Fire(newItem)
+	end
+
+	return newItem
+end
+
+--[=[
+	Gets the value of a key in the ReplicaClient object
+
+	@method Get
+	@within ReplicaClient
+	@param key string? -- The key to get. If nil, returns the entire data table
+	@return any -- The value of the key, or the entire data table if key is nil
+]=]
+function ReplicaClient.Get<T>(self: ReplicaClient<ReplicaTypes.Data>, key: string?): any
+	local data: ReplicaTypes.Data = self.data :: any
+
+	return if key then data[key] else data
+end
+
+--[=[
+	Returns a Signal that fires when a key in the replica is updated
+
+	Usage:
+	```lua
+	local replica = ReplicaClient.getReplicaById("replicaId")
+
+	replica:GetKeyChangedSignal("key"):Connect(function(value)
+		print("Key changed:", value)
+	end)
+	```
+
+	@method GetKeyChangedSignal
+	@within ReplicaClient
+	@param key string -- The key to get the value of
+	@return Signal.Signal<ReplicaClient>
+]=]
+function ReplicaClient.GetKeyChangedSignal<T>(
+	self: ReplicaClient<T>,
+	key: string
+): Signal.Signal<any>
+	assert(RunService:IsClient(), "ReplicaClient can only be used on the client")
+	assert(type(key) == "string", "Expected string for key")
+
+	local signal = Signal.new()
+
+	if not self.keyChangedSignals[key] then
+		self.keyChangedSignals[key] = {}
+	end
+
+	table.insert(self.keyChangedSignals[key], signal)
+
+	signal.onDestroy = function()
+		for index, storedSignal in self.keyChangedSignals[key] do
+			if storedSignal == signal then
+				table.remove(self.keyChangedSignals[key], index)
+				break
+			end
+		end
+	end
+
+	return signal
+end
+
+--[=[
+	Gets an existing replica
+
+	@param replicaId string -- The id of the replica to get
+	@return ReplicaClient?
+]=]
+function ReplicaClient.getReplicaById<any>(replicaId: string): ReplicaClient<any>?
+	for _, replica: ReplicaClient<any> in pairs(replicas) do
+		if replica.replicaId == replicaId then
+			return replica
+		end
+	end
+
+	return nil
+end
+
+--[=[
+	Starts listening for new replicated objects of the specified class
+
+	Use `fireForExisting` to fire the signal for all existing replicas of the specified class.
+
+	@param class string -- Configuration for the replicated object
+	@param fireForExisting boolean? -- If true, fire the signal for all existing replicas
+	@return Signal.Signal<ReplicaClient> -- The signal that is fired when a new replica is added
+]=]
+function ReplicaClient.getReplicaAddedSignal(
+	class: string,
+	fireForExisting: boolean? -- If true, fire the signal for all existing replicas
+): Signal.Signal<ReplicaClient<any>>
+	assert(RunService:IsClient(), "ReplicaClient can only be used on the client")
+	assert(type(class) == "string", "Expected string for class")
+	assert(
+		type(fireForExisting) == "boolean" or fireForExisting == nil,
+		"Expected boolean or nil for fireForExisting"
+	)
+
+	-- Call the server to fetch all replicas of class
+	remote:FireServer({ type = "FETCH_CLASS_REPLICAS", payload = class })
+
+	-- Create a new listener signal if it doesn't exist
+	if not signals[class] then
+		signals[class] = Signal.new({
+			bufferEnabled = false,
+		})
+	end
+
+	local newSignal: Signal.Signal<ReplicaClient<any>> = Signal.new({
+		bufferEnabled = false,
+	})
+
+	signals[class].onDestroy = function()
+		signals[class] = nil
+	end
+
+	local function listenForReplicas()
+		signals[class]:Connect(function(replica: ReplicaClient<any>)
+			newSignal:Fire(replica)
+		end)
+	end
+
+	if fireForExisting then
+		-- Fire the signal for any existing replicas
+		task.defer(function()
+			-- Delay to ensure the signal is returned before firing
+			for _, replica: ReplicaClient<any> in pairs(replicas) do
+				if replica.class == class then
+					newSignal:Fire(replica)
+				end
+			end
+
+			listenForReplicas()
+		end)
+	else
+		listenForReplicas()
+	end
+
+	return newSignal
+end
+
+if RunService:IsClient() then
+	remote = script.Parent:WaitForChild("ReplicaEvents", 8)
+
+	remote.OnClientEvent:Connect(function(action: ReplicaTypes.Action)
+		if action.type == "FETCH_CLASS_REPLICAS" then
+			assert(not replicas[action.payload.replicaId], "Replica already exists")
+
+			-- Create new replica instances for each existing replica
+			-- while checking if they already exist
+			for _, existingReplica: ReplicaTypes.ReplicaFetchPayloadItem in action.payload do
+				newReplicaClient(existingReplica)
+			end
+		elseif action.type == "REPLICA_NEW" then
+			-- Create a new replica instance
+			newReplicaClient(action.payload :: ReplicaTypes.ReplicaFetchPayloadItem)
+		elseif action.type == "REPLICA_UPDATE" then
+			local replica = ReplicaClient.getReplicaById(action.payload.replicaId)
+
+			if not replica then
+				return
+			end
+
+			replica.data[action.payload.key] = action.payload.value
+
+			replica.Changed:Fire(replica.data)
+
+			if replica.keyChangedSignals[action.payload.key] then
+				for _, signal in replica.keyChangedSignals[action.payload.key] do
+					signal:Fire(action.payload.value)
+				end
+			end
+
+			-- FIRE ANY ATTACHED SIGNALS THAT LISTEN FOR THE REPLICA_UPDATE KEY
+		elseif action.type == "REPLICA_DESTROY" then
+			local replica = ReplicaClient.getReplicaById(action.payload.replicaId)
+
+			if not replica then
+				return
+			end
+
+			for index, child: ReplicaClient<any> in pairs(replicas) do
+				if child == replica then
+					if child.Destroyed then
+						child.Destroyed:Fire()
+					end
+
+					-- Clear key changed signals
+					for _, keySignals in child.keyChangedSignals do
+						for _, signal in keySignals do
+							signal:Destroy()
+						end
+					end
+
+					table.remove(replicas, index)
+					break
+				end
+			end
+		end
+	end)
+end
+
+return ReplicaClient
