@@ -1,4 +1,8 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CameraShakeService = require(ReplicatedStorage.Shared.modules.Services.CameraShakeService)
 local Bomb = {}
+
 Bomb.__index = Bomb
 
 function Bomb.new(bombModel: Model, wall: Instance, destroyedWall: Instance, doExplosion: boolean?)
@@ -19,6 +23,17 @@ function Bomb:Explode(
 	tickingSoundEffect: number,
 	regenWallTime: number
 )
+	-- condition checks
+	if not self.wall:IsA("BasePart") then
+		return error("Destroyable wall must be typeof 'Base Part'")
+	end
+	if not self.destroyedWall:IsA("Model") then
+		return error("Destroyable wall must be typeof 'Model'")
+	end
+	if not self.bombModel:IsA("Model") then
+		return error("BombModel must be typeof 'Model'")
+	end
+
 	local sound = Instance.new("Sound")
 	sound.SoundId = "rbxassetid://" .. bombSoundEffect
 	sound.Volume = 1
@@ -57,6 +72,7 @@ function Bomb:Explode(
 	end)
 
 	if self.destroyedWall then
+		self.destroyedWall.PrimaryPart.CFrame = self.wall.CFrame
 		self.destroyedWall.Parent = workspace
 	end
 
@@ -73,7 +89,21 @@ function Bomb:Explode(
 		end
 	end)
 
+	task.spawn(function()
+		for _, player in pairs(Players:GetPlayers()) do
+			local char = player.Character or player.CharacterAdded:Wait()
+			local hrp = char.PrimaryPart
+
+			local mag = (bombPlacementLocation.Position - hrp.Position).Magnitude
+
+			if mag <= 25 then
+				CameraShakeService.ShakePlayerCamera(player, 2, 2)
+			end
+		end
+	end)
+
 	self.bombModel:Destroy()
+	return
 end
 
 function Bomb:Uninitalize()

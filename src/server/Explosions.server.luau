@@ -42,8 +42,8 @@ function Particalize(Explosion)
 	Debris:AddItem(Part, Duration2)
 end
 
-game.Workspace.DescendantAdded:Connect(function(Thing)
-	if Thing.ClassName == "Explosion" and Thing.Visible == true then
-		Particalize(Thing)
+game.Workspace.DescendantAdded:Connect(function(descendant)
+	if descendant:IsA("Explosion") and descendant.Visible == true then
+		Particalize(descendant)
 	end
 end)

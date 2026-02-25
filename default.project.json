@@ -1,10 +1,13 @@
 {
-  "name": "Treefall",
+  "name": "TrialScripting",
   "tree": {
     "$className": "DataModel",
     "ReplicatedStorage": {
       "Shared": {
         "$path": "src/shared"
+      },
+      "Packages": {
+        "$path": "Packages"
       }
     },
     "ServerScriptService": {
