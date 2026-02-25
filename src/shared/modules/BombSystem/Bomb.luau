@@ -6,7 +6,7 @@ function Bomb.new(bombModel: Model, wall: Instance, destroyedWall: Instance, doE
 
 	self.bombModel = bombModel:Clone()
 	self.wall = wall
-	self.destroyedWall = destroyedWall
+	self.destroyedWall = destroyedWall:Clone()
 	self.doExplosion = doExplosion
 
 	return self
@@ -16,7 +16,8 @@ function Bomb:Explode(
 	countdown: number,
 	bombPlacementLocation: CFrame,
 	bombSoundEffect: number,
-	tickingSoundEffect: number
+	tickingSoundEffect: number,
+	regenWallTime: number
 )
 	local sound = Instance.new("Sound")
 	sound.SoundId = "rbxassetid://" .. bombSoundEffect
@@ -31,6 +32,8 @@ function Bomb:Explode(
 	tickingSound.Parent = self.bombModel
 	tickingSound:Play()
 
+	local clonedWall = nil
+
 	self.bombModel:PivotTo(bombPlacementLocation)
 
 	self.bombModel.Parent = workspace
@@ -38,8 +41,20 @@ function Bomb:Explode(
 	task.wait(countdown)
 
 	if self.wall then
+		clonedWall = self.wall:Clone()
 		self.wall:Destroy()
 	end
+
+	task.spawn(function()
+		for i = 1, regenWallTime do
+			print(i)
+			task.wait(1)
+		end
+
+		self.destroyedWall:Destroy()
+		clonedWall.Parent = workspace
+		self:Uninitalize()
+	end)
 
 	if self.destroyedWall then
 		self.destroyedWall.Parent = workspace
@@ -59,6 +74,9 @@ function Bomb:Explode(
 	end)
 
 	self.bombModel:Destroy()
+end
+
+function Bomb:Uninitalize()
 	self = nil
 end
 
