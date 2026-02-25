@@ -1,26 +1,37 @@
 local Bomb = {}
 Bomb.__index = Bomb
 
-function Bomb.new(
-	bombModel: Model,
-	wall: Instance,
-	destroyedWall: Instance,
-	debrisModel: Instance?,
-	doExplosion: boolean?
-)
+function Bomb.new(bombModel: Model, wall: Instance, destroyedWall: Instance, doExplosion: boolean?)
 	local self = setmetatable({}, Bomb)
 
 	self.bombModel = bombModel:Clone()
 	self.wall = wall
 	self.destroyedWall = destroyedWall
-	self.debrisModel = debrisModel
 	self.doExplosion = doExplosion
 
 	return self
 end
 
-function Bomb:Explode(countdown: number, bombPlacementLocation: Vector3)
-	self.bombModel:SetPrimaryPartCFrame(CFrame.new(bombPlacementLocation))
+function Bomb:Explode(
+	countdown: number,
+	bombPlacementLocation: CFrame,
+	bombSoundEffect: number,
+	tickingSoundEffect: number
+)
+	local sound = Instance.new("Sound")
+	sound.SoundId = "rbxassetid://" .. bombSoundEffect
+	sound.Volume = 1
+	sound.PlayOnRemove = true
+	sound.Parent = self.bombModel
+
+	local tickingSound = Instance.new("Sound")
+	tickingSound.SoundId = "rbxassetid://" .. tickingSoundEffect
+	tickingSound.Volume = 0.15
+	tickingSound.Looped = true
+	tickingSound.Parent = self.bombModel
+	tickingSound:Play()
+
+	self.bombModel:PivotTo(bombPlacementLocation)
 
 	self.bombModel.Parent = workspace
 
@@ -34,21 +45,21 @@ function Bomb:Explode(countdown: number, bombPlacementLocation: Vector3)
 		self.destroyedWall.Parent = workspace
 	end
 
-	if self.debrisModel then
-		local debris = self.debrisModel:Clone()
-		debris:SetPrimaryPartCFrame(CFrame.new(bombPlacementLocation))
-		debris.Parent = workspace
-	end
-
-	if self.doExplosion then
-		local explosion = Instance.new("Explosion")
-		explosion.Position = bombPlacementLocation
-		explosion.BlastRadius = 10
-		explosion.BlastPressure = 50000
-		explosion.Parent = workspace
-	end
+	task.spawn(function()
+		if self.doExplosion then
+			local explosion = Instance.new("Explosion")
+			explosion.BlastRadius = 1
+			explosion.BlastPressure = 300
+			explosion.Position = bombPlacementLocation.Position
+			explosion.Visible = true
+			explosion.DestroyJointRadiusPercent = 0
+			explosion.ExplosionType = Enum.ExplosionType.NoCraters
+			explosion.Parent = workspace
+		end
+	end)
 
 	self.bombModel:Destroy()
+	self = nil
 end
 
 return Bomb
